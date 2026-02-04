@@ -1,13 +1,22 @@
-def normalize_sentence(sent) -> str:
+def normalize_sentence(doc) -> str:
     """
-    Removes discourse markers & fluff WITHOUT breaking grammar.
+    Extracts the main propositional clause.
     """
-    tokens = []
-    for token in sent:
-        if token.dep_ in ("mark", "advmod") and token.text.lower() in {
-            "however", "actually", "later", "finally"
-        }:
-            continue
-        tokens.append(token.text)
+    root = None
+    for token in doc:
+        if token.dep_ == "ROOT":
+            root = token
+            break
 
+    if not root:
+        return doc.text.strip()
+
+    # Keep subject + predicate subtree
+    keep = set()
+
+    for child in root.subtree:
+        if child.dep_ not in {"discourse", "mark"}:
+            keep.add(child.i)
+
+    tokens = [t.text for t in doc if t.i in keep]
     return " ".join(tokens).strip()
