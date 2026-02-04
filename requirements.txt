@@ -1,0 +1,7 @@
+streamlit>=1.31.0
+requests
+beautifulsoup4
+pydantic
+python-dotenv
+spacy==3.7.4
+nltk==3.8.1
