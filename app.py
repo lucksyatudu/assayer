@@ -1,6 +1,5 @@
+import asyncio
 import streamlit as st
-
-from src.pipelines.claim_pipeline import run_claim_pipeline
 
 # -----------------------------
 # Page config
@@ -15,12 +14,12 @@ st.set_page_config(
 # Header
 # -----------------------------
 st.title("🧾 Assayer - Claim Validator")
-st.subheader("Paste text and extract verifiable claims")
+st.subheader("Paste text and validate verifiable claims")
 
 st.markdown(
     """
-    This tool identifies **claims** in a given text and (later) finds
-    **relevant sources from the web** to support or refute them.
+    This tool identifies **verifiable claims** and evaluates them using  
+    a hybrid approach: web evidence + LLM reasoning.
     """
 )
 
@@ -54,10 +53,40 @@ with col1:
     )
 
 with col2:
-    st.caption("Analysis will extract factual, checkable claims.")
+    st.caption("Hybrid validation using web evidence + Gemini")
+
+st.divider()
+
 
 # -----------------------------
-# Validation feedback
+# Helper: Score Styling
+# -----------------------------
+def score_badge(score: str) -> str:
+    color_map = {
+        "Accurate": "#2E7D32",
+        "Inaccurate": "#C62828",
+        "Disputed": "#EF6C00",
+        "Unsupported": "#616161",
+        "Cannot Confidently Assess": "#1565C0",
+    }
+
+    color = color_map.get(score, "#616161")
+
+    return f"""
+    <span style="
+        background-color:{color};
+        color:white;
+        padding:4px 10px;
+        border-radius:12px;
+        font-size:0.85rem;
+        font-weight:600;">
+        {score}
+    </span>
+    """
+
+
+# -----------------------------
+# Results Rendering
 # -----------------------------
 if analyze_btn:
     if not text_input.strip():
@@ -65,12 +94,53 @@ if analyze_btn:
     elif len(text_input.strip()) < 20:
         st.warning("Text is too short to contain meaningful claims.")
     else:
-        claims = run_claim_pipeline(text_input)
-        for claim in claims:
-            st.write(f"🔹 {claim.original_sentence}")
+        with st.spinner("Analyzing and validating claims..."):
+            try:
+                # Import lazily to avoid startup crashes
+                from src.pipelines.claim_pipeline import run_claim_pipeline
+
+                # Run async pipeline safely
+                results = asyncio.run(run_claim_pipeline(text_input))
+
+            except RuntimeError:
+                # Handles "event loop already running"
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                results = loop.run_until_complete(
+                    run_claim_pipeline(text_input)
+                )
+
+            except Exception as e:
+                st.error(f"Error during processing: {e}")
+                st.stop()
+
+        if not results:
+            st.info("No strong verifiable claims found.")
+        else:
+            st.markdown("## 🧾 Validation Results")
+
+            for idx, result in enumerate(results, 1):
+                with st.container():
+                    st.markdown(f"### 🔹 Claim {idx}")
+                    st.write(result.claim.original_sentence)
+
+                    # Score badge
+                    st.markdown(score_badge(result.score), unsafe_allow_html=True)
+
+                    # Source
+                    if result.source:
+                        st.markdown(f"**Source:** [{result.source}]({result.source})")
+
+                    # Evidence snippet
+                    if result.evidence_snippet:
+                        st.markdown("**Relevant Evidence:**")
+                        st.info(result.evidence_snippet)
+
+                    st.divider()
+
 
 # -----------------------------
 # Footer
 # -----------------------------
 st.divider()
-st.caption("⚙️ Version 0.1")
+st.caption("⚙️ Assayer v0.2 | Hybrid Claim Validation")
