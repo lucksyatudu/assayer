@@ -1,6 +1,5 @@
-from typing import List, Dict, Any
+from typing import Dict, Any
 from src.claims.schema import Claim
-from src.web_search.search import SearchResult
 from src.llm_utils.gemini import BaseModel
 
 
@@ -14,73 +13,39 @@ VALID_LABELS = {
 
 
 class GeminiClaimValidator(BaseModel):
-    """
-    Gemini-powered hybrid claim evaluator.
 
-    Input:
-        - Claim
-        - Supporting evidence snippets
-        - Contradicting evidence snippets
-
-    Output:
-        {
-            "score": <ValidationScore>,
-            "reasoning": <short explanation>
-        }
-    """
-
-    async def run(
-        self,
-        claim: Claim,
-        supporting: List[SearchResult],
-        contradicting: List[SearchResult],
-    ) -> Dict[str, Any]:
-
-        prompt = self._build_prompt(claim, supporting, contradicting)
-
-        raw_output = await self._generate(prompt)
-
-        parsed = self._parse_output(raw_output)
-
-        return parsed
+    async def run(self, claim: Claim) -> Dict[str, Any]:
+        prompt = self._build_prompt(claim)
+        raw_output = ''
+        try:
+            raw_output = await self._generate(prompt)
+        except Exception:
+            pass
+        return self._parse_output(raw_output)
 
     # ------------------------------------------------------------------ #
-    # Prompt Construction
+    # Prompt
     # ------------------------------------------------------------------ #
 
-    def _build_prompt(
-        self,
-        claim: Claim,
-        supporting: List[SearchResult],
-        contradicting: List[SearchResult],
-    ) -> str:
-
-        def format_evidence(results: List[SearchResult]) -> str:
-            if not results:
-                return "None"
-            return "\n".join(
-                f"- {r.snippet} (Source: {r.url})"
-                for r in results[:3]
-            )
-
+    def _build_prompt(self, claim: Claim) -> str:
         return f"""
-        You are a strict factual claim validator.
+        You are a professional fact-checking system.
 
-        Your task is to classify the claim using the evidence provided.
+        Your task:
+
+        1. Perform a web search to verify the claim.
+        2. Cross-check at least 2 independent reliable sources.
+        3. Determine factual accuracy.
+        4. Provide the most authoritative source URL.
+        5. Quote a short supporting or contradicting snippet.
 
         Claim:
-        "{claim.normalized_claim}"
+        "{claim.original_sentence}"
 
         Subject: {claim.subject}
         Predicate: {claim.predicate}
 
-        Supporting Evidence:
-        {format_evidence(supporting)}
-
-        Contradicting Evidence:
-        {format_evidence(contradicting)}
-
-        Classify the claim into EXACTLY one of the following:
+        Classify into EXACTLY one of:
 
         - Accurate
         - Inaccurate
@@ -88,44 +53,52 @@ class GeminiClaimValidator(BaseModel):
         - Unsupported
         - Cannot Confidently Assess
 
-        Rules:
-        - Accurate → Strong reliable evidence supports claim.
-        - Inaccurate → Strong reliable evidence disproves claim.
+        Definitions:
+        - Accurate → Strong evidence confirms claim.
+        - Inaccurate → Strong evidence disproves claim.
         - Disputed → Credible sources disagree.
-        - Unsupported → No reliable evidence found.
-        - Cannot Confidently Assess → Evidence is insufficient or unclear.
+        - Unsupported → No reliable evidence exists.
+        - Cannot Confidently Assess → Insufficient clarity.
 
-        Respond strictly in this format:
+        Return STRICTLY in this format:
 
-        Score: <one of the five labels>
-        Reasoning: <1–3 sentence explanation>
+        Score: <label>
+        Reasoning: <2-4 sentence explanation>
+        Source: <best URL>
+        Evidence: <quoted snippet>
         """
 
     # ------------------------------------------------------------------ #
-    # Output Parsing
+    # Parse
     # ------------------------------------------------------------------ #
 
     def _parse_output(self, text: str) -> Dict[str, Any]:
-        """
-        Extracts:
-            Score: ...
-            Reasoning: ...
-        """
-
         score = None
         reasoning = None
+        source = None
+        evidence = None
 
         for line in text.splitlines():
-            if line.lower().startswith("score:"):
+            lower = line.lower()
+
+            if lower.startswith("score:"):
                 score = line.split(":", 1)[1].strip()
-            elif line.lower().startswith("reasoning:"):
+
+            elif lower.startswith("reasoning:"):
                 reasoning = line.split(":", 1)[1].strip()
 
-        # Hard safety enforcement
+            elif lower.startswith("source:"):
+                source = line.split(":", 1)[1].strip()
+
+            elif lower.startswith("evidence:"):
+                evidence = line.split(":", 1)[1].strip()
+
         if score not in VALID_LABELS:
             score = "Cannot Confidently Assess"
 
         return {
             "score": score,
             "reasoning": reasoning or "No explanation provided.",
+            "source": source,
+            "evidence": evidence,
         }
